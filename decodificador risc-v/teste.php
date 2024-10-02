@@ -114,7 +114,8 @@ function obterBinario($c)
 function verificar_hazard_instrucao($instrucao_1, $instrucao_2)
 {
     // Verifica se o registrador de destino da instrução 1 é um dos registradores fonte da instrução 2
-    return $instrucao_1['rd'] == $instrucao_2['rs1'] || $instrucao_1['rd'] == $instrucao_2['rs2'];
+    return $instrucao_1['rd'] == $instrucao_2['rs1']
+        || $instrucao_1['rd'] == $instrucao_2['rs2'];
 }
 
 // Função que verifica hazards em um conjunto de instruções
@@ -153,7 +154,7 @@ function inserir_nops($instrucoes, $hazards, $forwarding)
     $no_operator->rs1 = "00000";
     $no_operator->rs2 = "00000";
     $no_operator->funct7 = "0000000";
-    $no_operator->tipo = "nop";
+    $no_operator->tipo = "NOP";
 
     // Percorre os hazards em ordem inversa
     for ($x = count($hazards) - 1; $x >= 0; $x--) {
@@ -164,11 +165,10 @@ function inserir_nops($instrucoes, $hazards, $forwarding)
         if ($instrucoes[$hazardIndex]['tipo'] == 'load') {
             // Se a próxima instrução usar o registrador de destino do load
             for ($y = $hazardIndex + 1; $y < count($instrucoes); $y++) {
-                if ($instrucoes[$hazardIndex]['rd'] == $instrucoes[$y]['rs1'] ||
-                    $instrucoes[$hazardIndex]['rd'] == $instrucoes[$y]['rs2']) {
+                if ( verificar_hazard_instrucao( $instrucoes[$hazardIndex], $instrucoes[$y])) {
                     // Insere NOPs
                     for ($k = 0; $k < $qtd_nops; $k++) {
-                        array_splice($instrucoes, $hazardIndex + 1, 0, [$no_operator->toArray()]);
+                        array_splice($instrucoes, $hazardIndex, 0, [$no_operator->toArray()]);
                     }
                     break; // Sai do loop após inserir os NOPs
                 }
@@ -184,7 +184,6 @@ function inserir_nops($instrucoes, $hazards, $forwarding)
                     // Insere NOPs na posição correta
                     for ($k = 0; $k < $qtd_nops; $k++) {
                         array_splice($instrucoes, $hazardIndex + 1, 0, [$no_operator->toArray()]);
-
                     }
                 }
             }
@@ -193,8 +192,9 @@ function inserir_nops($instrucoes, $hazards, $forwarding)
     return inserir_nops_em_jump($instrucoes); // Retorna o conjunto de instruções com NOPs inseridos
 }
 
-function inserir_nops_em_jump($instrucoes) {
-
+// Função para inserir NOPs antes de instruções de salto
+function inserir_nops_em_jump($instrucoes)
+{
     $no_operator = new ConjuntoInstrucao();
     $no_operator->instrucao = "00000000000000000000000000110011"; // Representação da instrução NOP
     $no_operator->opcode = "0110011";
@@ -203,13 +203,13 @@ function inserir_nops_em_jump($instrucoes) {
     $no_operator->rs1 = "00000";
     $no_operator->rs2 = "00000";
     $no_operator->funct7 = "0000000";
-    $no_operator->tipo = "nop";
+    $no_operator->tipo = "NOP motivo: Jump";
 
-    // Iterar pelas instruções na ordem inversa
+    // Itera pelas instruções na ordem inversa
     for ($i = count($instrucoes) - 1; $i >= 0; $i--) {
-        // Verifique se a instrução atual é um salto
+        // Verifica se a instrução atual é um salto
         if ($instrucoes[$i]['tipo'] == "jump") {
-            // Insira NOP antes da instrução de salto
+            // Insere NOP antes da instrução de salto
             array_splice($instrucoes, $i, 0, [$no_operator->toArray()]);
         }
     }
@@ -217,7 +217,7 @@ function inserir_nops_em_jump($instrucoes) {
     return $instrucoes;
 }
 
-// <---- Preparação de arquivos ---->
+// Preparação de arquivos para leitura e escrita
 $inputFile = fopen("lerHex.txt", "r"); // Abre o arquivo para leitura
 $outputFile = fopen("gravar.txt", "w"); // Abre o arquivo para escrita
 $outputFile2 = fopen("convertidoBinario.txt", "w"); // Abre o arquivo para escrita do binário convertido
@@ -259,4 +259,6 @@ if ($inputFile && $outputFile) {
     fclose($inputFile); // Fecha o arquivo de entrada
     fclose($outputFile); // Fecha o arquivo de saída
     fclose($outputFile2); // Fecha o arquivo de saída
-} else echo "Erro ao abrir o arquivo.\n";
+} else {
+    echo "Erro ao abrir o arquivo.\n";
+}
