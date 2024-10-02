@@ -45,6 +45,7 @@ $branch_instructions = ['1100011'];
 $memory_instructions = ['0001111', '1110011'];
 $load_instructions = ['0000011'];
 $store_instructions = ['0100011'];
+
 function opcode($opcode, $verificarTipo)
 {
     global $categories, $alu_instructions, $jump_instructions, $branch_instructions, $memory_instructions, $load_instructions, $store_instructions;
@@ -107,15 +108,21 @@ function verificar_hazard_instrucao($instrucao_1, $instrucao_2)
     return $instrucao_1['rd'] == $instrucao_2['rs1'] || $instrucao_1['rd'] == $instrucao_2['rs2'];
 }
 
-function verificar_hazards($instrucoes)
+function verificar_hazards($instrucoes, $forwarding)
 {
     $hazards = [];
     for ($x = 0; $x < count($instrucoes); $x++) {
-        if ($instrucoes[$x]['rs1'] == "rd" && $instrucoes[$x]['tipo'] == "store"){
-            continue;
-        }
         for ($y = $x + 1; $y < $x + 3; $y++) {
             if ($y >= count($instrucoes)) {
+                continue;
+            }
+            if ($instrucoes[$x]['rd'] == "00000") {
+                continue;
+            }
+            if ($instrucoes[$x]['tipo'] == "load" && $instrucoes[$x]['rs1'] == "rd") {
+                continue;
+            }
+            if ($y == $x + 2 && $forwarding) {
                 continue;
             }
             if (verificar_hazard_instrucao($instrucoes[$x], $instrucoes[$y])) {
@@ -129,11 +136,21 @@ function verificar_hazards($instrucoes)
 function inserir_nops($instrucoes, $hazards, $forwarding)
 {
     $no_operator = new ConjuntoInstrucao();
-    $no_operator->instrucao = "00000000000000000000000000110011 nop";
+    $no_operator->instrucao = "00000000000000000000000000110011"; // Representação da instrução NOP
+    $no_operator->opcode = "0110011";
+    $no_operator->rd = "00000";
+    $no_operator->funct3 = "000";
+    $no_operator->rs1 = "00000";
+    $no_operator->rs2 = "00000";
+    $no_operator->funct7 = "0000000";
+    $no_operator->tipo = "nop";
 
     for ($x = count($hazards) - 1; $x >= 0; $x--) {
-        $qtd_nops = $forwarding ? 1 : 2;
+        $qtd_nops = !$forwarding ? 2 : 1;
         for ($y = $hazards[$x] + 1; $y <= $hazards[$x] + $qtd_nops; $y++) {
+            if ($y >= count($instrucoes)) {
+                continue;
+            }
             if (verificar_hazard_instrucao($instrucoes[$hazards[$x]], $instrucoes[$y])) {
                 for ($k = 0; $k < $qtd_nops; $k++) {
                     array_splice($instrucoes, $hazards[$x] + 1, 0, [$no_operator->toArray()]);
@@ -173,7 +190,7 @@ if ($inputFile && $outputFile) {
         $conjuntos[] = $conjunto->toArray();
     }
     $forwarding = true;
-    $hazards = verificar_hazards($conjuntos);
+    $hazards = verificar_hazards($conjuntos, $forwarding);
     $instrucaos = inserir_nops($conjuntos, $hazards, $forwarding);
     foreach ($instrucaos as $instrucao) {
         fwrite($outputFile, implode(" ", $instrucao) . "\n");
