@@ -214,9 +214,9 @@ function inserir_nops($instrucoes, $conflitos, $forwarding)
         }
     }
 
-    return inserir_nops_em_jump($instrucoes);
+    return inserir_nops_em_desvios($instrucoes);
 }
-function inserir_nops_em_jump($instrucoes)
+function inserir_nops_em_desvios($instrucoes)
 {
     $no_operator = new ConjuntoInstrucao();
     $no_operator->instrucao = "00000000000000000000000000110011"; // Representação da instrução NOP
@@ -231,14 +231,17 @@ function inserir_nops_em_jump($instrucoes)
     // Itera pelas instruções na ordem inversa
     for ($i = count($instrucoes) - 1; $i >= 0; $i--) {
         // Verifica se a instrução atual é um salto
-        if ($instrucoes[$i]['tipo'] == "jump") {
+        if ($instrucoes[$i]['tipo'] == "jump" OR $instrucoes[$i]['tipo'] == "branch") {
             // Insere NOP antes da instrução de salto
-            array_splice($instrucoes, $i, 0, [$no_operator->toArray()]);
+            $no_operator->motivo_nop = "Inserido NOP devido a Desvio do tipo {$instrucoes[$i]['tipo']}";
+            array_splice($instrucoes, $i+1, 0, [$no_operator->toArray()]);
+            array_splice($instrucoes, $i+2, 0, [$no_operator->toArray()]);
         }
     }
 
     return $instrucoes;
 }
+
 function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingImplementado): array {
     // Passa por todas as hazards
     for ($i = 0; $i < count($hazards); $i++) {
@@ -306,6 +309,7 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
 
     return $instrucoes;
 }
+
 
 // Função para processar as instruções com ou sem forwarding
 function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
