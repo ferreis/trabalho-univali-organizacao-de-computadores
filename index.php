@@ -239,14 +239,83 @@ function inserir_nops_em_jump($instrucoes)
 
     return $instrucoes;
 }
+function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingImplementado): array {
+    // Passa por todas as hazards
+    for ($i = 0; $i < count($hazards); $i++) {
+        $instrucaoEscolhida = null;
+        $instrucaoEscolhidaDefinida = false;
+        $indiceInstrucaoEscolhida = 0;
+
+        // Passa por todas as instruções abaixo da linha da hazard
+        for ($j = $i + 1; $j < count($instrucoes); $j++) {
+
+            // Validação da linha para entrar em hazard+1 //
+
+            // Passa linha $j se ela conflita com a linha da hazard
+            if (verificar_hazard_instrucao($instrucoes[$hazards[$i]], $instrucoes[$j], $forwardingImplementado)) {
+                continue;
+            }
+
+            // Passa linha $j se não tiver forwarding e ela conflitar com hazard-1
+            if (!$forwardingImplementado && $i > 0) {
+                if (verificar_hazard_instrucao($instrucoes[$hazards[$i] - 1], $instrucoes[$j], $forwardingImplementado)) {
+                    continue;
+                }
+            }
+
+            $linhaValidaDepois = true;
+            // Passa linha $j se as linhas após a hazard não terão conflito com a linha $j
+            for ($k = $hazards[$i] + 1; $k <= $hazards[$i] + ($forwardingImplementado ? 1 : 2); $k++) {
+                // Evita $k de atravessar o tamanho máximo do vetor
+                if ($k > count($instrucoes) - 1) continue;
+                if (verificar_hazard_instrucao($instrucoes[$k], $instrucoes[$j], $forwardingImplementado)) {
+                    $linhaValidaDepois = false;
+                    break;
+                }
+            }
+
+            // Validação da linha ao sair de seu ponto de origem //
+
+            $linhaValidaAntes = true;
+            // Passa linha $j se a linha $j-1 não tiver conflito com as próximas linhas caso a linha $j seja removida
+            for ($k = $j + 1; $k <= $j + ($forwardingImplementado ? 1 : 2); $k++) {
+                // Evita $k de atravessar o tamanho máximo do vetor
+                if ($k > count($instrucoes) - 1) continue;
+                if (verificar_hazard_instrucao($instrucoes[$j - 1], $instrucoes[$k], $forwardingImplementado)) {
+                    $linhaValidaAntes = false;
+                    break;
+                }
+            }
+
+            if ($linhaValidaAntes && $linhaValidaDepois) {
+                $instrucaoEscolhida = $instrucoes[$j];
+                $instrucaoEscolhidaDefinida = true;
+                $indiceInstrucaoEscolhida = $j;
+                break;
+            }
+        }
+
+        // Há uma instrução que pode ser reordenada
+        if ($instrucaoEscolhidaDefinida) {
+            // Insere a instrução após a hazard
+            array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]);
+            // Remove a instrução da posição original
+            array_splice($instrucoes, $indiceInstrucaoEscolhida + 1, 1);
+        }
+    }
+
+    return $instrucoes;
+}
+
 // Função para processar as instruções com ou sem forwarding
-function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $forwarding)
+function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
 {
     $inputFile = fopen($inputPath, "r"); // Abre o arquivo de entrada
-    $outputFile = fopen($outputFinal, "w"); // Abre o arquivo de saída para instruções processadas
+    $outputFile = fopen($outputFinal, "w"); // Arquivo de saída para instruções com NOPs
     $outputFileOriginal = fopen($outputOriginal, "w"); // Arquivo para gravação das instruções originais
+    $outputFileReordenado = fopen($outputReordenado, "w"); // Arquivo para gravação das instruções reordenadas
 
-    if ($inputFile && $outputFile && $outputFileOriginal) {
+    if ($inputFile && $outputFile && $outputFileOriginal && $outputFileReordenado) {
         $conjuntos = []; // Array de instruções
 
         // Lê e processa o arquivo de entrada
@@ -281,33 +350,48 @@ function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $forwar
         $hazards = verificar_hazards($conjuntos, $forwarding);
         $instrucaos_com_nops = inserir_nops($conjuntos, $hazards, $forwarding);
 
-        // Grava as instruções originais e processadas
+        // Grava as instruções originais
         foreach ($conjuntos as $instrucao) {
             fwrite($outputFileOriginal, implode(" ", $instrucao) . "\n");
         }
 
+        // Grava as instruções processadas com NOPs
         foreach ($instrucaos_com_nops as $index => $conjunto) {
-            $linha = ($index + 1) . ": " . $conjunto['instrucao'] . ' ' . $conjunto['opcode'] .
-                ' ' . $conjunto['rd'] . ' ' . $conjunto['funct3'] . ' ' . $conjunto['rs1'] . ' ' .
-                $conjunto['rs2'] . ' ' . $conjunto['funct7'] . ' ' . $conjunto['tipo'];
+            $linha = ($index + 1) . ": " . $conjunto['instrucao'] . ' ' . $conjunto['opcode'] . ' ' . $conjunto['rd'] . ' ' . $conjunto['funct3'] . ' ' . $conjunto['rs1'] . ' ' . $conjunto['rs2'] . ' ' . $conjunto['funct7'] . ' ' . $conjunto['tipo'];
 
             // Adiciona motivo NOP se houver
             if ($conjunto['motivo_nop']) {
                 $linha .= ' - ' . $conjunto['motivo_nop'];
             }
 
-            fwrite($outputFile, $linha . "\n"); // Corrigido para escrever no arquivo de saída correto
+            fwrite($outputFile, $linha . "\n");
+        }
+
+        // Aplica reordenação de instruções após inserir NOPs
+        $instrucaos_reordenadas = aplicarReordenacao($instrucaos_com_nops, $hazards, $forwarding);
+
+        // Grava as instruções reordenadas
+        foreach ($instrucaos_reordenadas as $index => $conjunto) {
+            $linha = ($index + 1) . ": " . $conjunto['instrucao'] . ' ' . $conjunto['opcode'] . ' ' . $conjunto['rd'] . ' ' . $conjunto['funct3'] . ' ' . $conjunto['rs1'] . ' ' . $conjunto['rs2'] . ' ' . $conjunto['funct7'] . ' ' . $conjunto['tipo'];
+
+            // Adiciona motivo NOP se houver
+            if ($conjunto['motivo_nop']) {
+                $linha .= ' - ' . $conjunto['motivo_nop'];
+            }
+
+            fwrite($outputFileReordenado, $linha . "\n");
         }
 
         // Fecha os arquivos
         fclose($inputFile);
         fclose($outputFile);
         fclose($outputFileOriginal);
+        fclose($outputFileReordenado);
     } else {
         echo "Erro ao abrir os arquivos.";
     }
 }
 
-// Executa o processamento com e sem forwarding
-processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_sem_forwarding.txt", false);
-processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_com_forwarding.txt", true);
+// Executa o processamento com e sem forwarding, incluindo arquivo reordenado
+processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_sem_forwarding.txt", "saida_reordenada_sem_forwarding.txt", false);
+processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_com_forwarding.txt", "saida_reordenada_com_forwarding.txt", true);
