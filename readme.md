@@ -1,5 +1,3 @@
-Aqui estão as tabelas com as instruções RISC-V para três casos: sem NOP, com forwarding e com forwarding + reordenação.
-
 ### Sem Forwarding
 
 | Linha | Instrução                               | opcode  |  rd  | funct3 |  rs1 |  rs2 | funct7 |    Tipo   | Nop | Risc-v                   |
