@@ -301,7 +301,7 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
         // Há uma instrução que pode ser reordenada
         if ($instrucaoEscolhidaDefinida) {
             // Insere a instrução após a hazard
-            $instrucaoEscolhida['motivo_nop'] = "Reordenado, para linha " . ($hazards[$i] + 1);
+            $instrucaoEscolhida['motivo_nop'] = "Reordenado, da linha " . ($indiceInstrucaoEscolhida + 1) . " para linha " . ($hazards[$i] + 2);
             array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]);
             // Remove a instrução da posição original
             array_splice($instrucoes, $indiceInstrucaoEscolhida + 1, 1);
@@ -311,84 +311,124 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
     return $instrucoes;
 }
 
+function salvarTxt($instrucoes, $fileResource) {
+    // Define o cabeçalho com tamanhos fixos e centralizado
+    $cabecalho = str_pad("Linha", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("Instrução", 37, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("opcode", 7, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("rd", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("funct3", 6, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("rs1", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("rs2", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("funct7", 7, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("Tipo", 10, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("Nop", 4, ' ', STR_PAD_BOTH) . "| Motivo";
+    fwrite($fileResource, $cabecalho . "\n");
 
+    // Linha de separação
+    $linhaSeparadora = str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 35, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 7, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 6, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 7, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 10, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 4, '_', STR_PAD_BOTH) . "|".
+                       str_pad("", 80, '_');
+    fwrite($fileResource, $linhaSeparadora . "\n");
+
+    foreach ($instrucoes as $index => $conjunto) {
+        $numeroLinha = str_pad(($index + 1), 3, '0', STR_PAD_LEFT);
+        $linha = str_pad($numeroLinha, 5) . "| " . 
+                 str_pad($conjunto['instrucao'], 35) . "| " . 
+                 str_pad($conjunto['opcode'], 7) . "| " . 
+                 str_pad($conjunto['rd'], 5) . "| " . 
+                 str_pad($conjunto['funct3'], 6) . "| " . 
+                 str_pad($conjunto['rs1'], 5) . "| " . 
+                 str_pad($conjunto['rs2'], 5) . "| " . 
+                 str_pad($conjunto['funct7'], 7) . "| " . 
+                 str_pad($conjunto['tipo'], 10) . "| " . 
+                 str_pad(($conjunto['nop'] ? 'Sim' : 'Não '), 4) ."| " ;
+
+        // Adiciona motivo NOP se houver
+        if (!empty($conjunto['motivo_nop'])) {
+            $linha .=  $conjunto['motivo_nop'];
+        } 
+
+        fwrite($fileResource, $linha . "\n");
+    }
+}
+
+
+function lerArquivo($inputFile)
+{
+    if (!file_exists($inputFile)) {
+        die("Arquivo não encontrado!");
+    }
+
+    $arquivo = fopen($inputFile, "r");
+    $instrucoes = [];
+
+    while (($instrucao = fgets($arquivo)) !== false) {
+        $hexString = trim($instrucao);
+        $binaryString = '';
+
+        // Converte cada caractere hexadecimal em binário
+        foreach (str_split($hexString) as $c) {
+            $binaryString .= obterBinario($c);
+        }
+
+        // Cria um novo objeto ConjuntoInstrucao
+        $conjunto = new ConjuntoInstrucao();
+        $conjunto->instrucao = $binaryString;
+        $conjunto->opcode = substr($binaryString, 25, 7);
+        $conjunto->rd = substr($binaryString, 20, 5);
+        $conjunto->funct3 = substr($binaryString, 17, 3);
+        $conjunto->rs1 = substr($binaryString, 12, 5);
+        $conjunto->rs2 = substr($binaryString, 7, 5);
+        $conjunto->funct7 = substr($binaryString, 0, 7);
+        $conjunto->tipo = opcode($conjunto->opcode, true);
+        $conjunto->nop = false;
+        $conjunto->motivo_nop = "";
+
+        // Verifica se há NOPs para a instrução
+        opcode($conjunto->opcode, false);
+        $instrucoes[] = $conjunto->toArray();
+    }
+
+    fclose($arquivo);
+    return $instrucoes; // Retorna a lista de instruções
+}
 // Função para processar as instruções com ou sem forwarding
 function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
 {
-    $inputFile = fopen($inputPath, "r"); // Abre o arquivo de entrada
     $outputFile = fopen($outputFinal, "w"); // Arquivo de saída para instruções com NOPs
     $outputFileOriginal = fopen($outputOriginal, "w"); // Arquivo para gravação das instruções originais
     $outputFileReordenado = fopen($outputReordenado, "w"); // Arquivo para gravação das instruções reordenadas
 
-    if ($inputFile && $outputFile && $outputFileOriginal && $outputFileReordenado) {
-        $conjuntos = []; // Array de instruções
-
-        // Lê e processa o arquivo de entrada
-        while (($instrucao = fgets($inputFile)) !== false) {
-            $hexString = trim($instrucao);
-            $binaryString = '';
-
-            // Converte cada caractere hexadecimal em binário
-            foreach (str_split($hexString) as $c) {
-                $binaryString .= obterBinario($c);
-            }
-
-            // Cria um novo objeto ConjuntoInstrucao
-            $conjunto = new ConjuntoInstrucao();
-            $conjunto->instrucao = $binaryString;
-            $conjunto->opcode = substr($binaryString, 25, 7);
-            $conjunto->rd = substr($binaryString, 20, 5);
-            $conjunto->funct3 = substr($binaryString, 17, 3);
-            $conjunto->rs1 = substr($binaryString, 12, 5);
-            $conjunto->rs2 = substr($binaryString, 7, 5);
-            $conjunto->funct7 = substr($binaryString, 0, 7);
-            $conjunto->tipo = opcode($conjunto->opcode, true);
-            $conjunto->nop = false;
-            $conjunto->motivo_nop = "";
-
-            // Verifica se há NOPs para a instrução
-            opcode($conjunto->opcode, false);
-            $conjuntos[] = $conjunto->toArray();
-        }
+    if ($outputFile && $outputFileOriginal && $outputFileReordenado) {
+        
+        
 
         // Detecta hazards e insere NOPs
-        $hazards = verificar_hazards($conjuntos, $forwarding);
-        $instrucaos_com_nops = inserir_nops($conjuntos, $hazards, $forwarding);
+        $instrucoes = lerArquivo('lerHex.txt');
+        salvarTxt($instrucoes, $outputFileOriginal);
 
-        // Grava as instruções originais
-        foreach ($conjuntos as $instrucao) {
-            fwrite($outputFileOriginal, implode(" ", $instrucao) . "\n");
-        }
-
-        // Grava as instruções processadas com NOPs
-        foreach ($instrucaos_com_nops as $index => $conjunto) {
-            $linha = ($index + 1) . ": " . $conjunto['instrucao'] . ' ' . $conjunto['opcode'] . ' ' . $conjunto['rd'] . ' ' . $conjunto['funct3'] . ' ' . $conjunto['rs1'] . ' ' . $conjunto['rs2'] . ' ' . $conjunto['funct7'] . ' ' . $conjunto['tipo'];
-
-            // Adiciona motivo NOP se houver
-            if ($conjunto['motivo_nop']) {
-                $linha .= ' - ' . $conjunto['motivo_nop'];
-            }
-
-            fwrite($outputFile, $linha . "\n");
-        }
+        $hazards = verificar_hazards($instrucoes, $forwarding);
+        $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
+        salvarTxt($instrucoes, $outputFile);
 
         // Aplica reordenação de instruções após inserir NOPs
-        $instrucaos_reordenadas = aplicarReordenacao($instrucaos_com_nops, $hazards, $forwarding);
-
-        // Grava as instruções reordenadas
-        foreach ($instrucaos_reordenadas as $index => $conjunto) {
-            $linha = ($index + 1) . ": " . $conjunto['instrucao'] . ' ' . $conjunto['opcode'] . ' ' . $conjunto['rd'] . ' ' . $conjunto['funct3'] . ' ' . $conjunto['rs1'] . ' ' . $conjunto['rs2'] . ' ' . $conjunto['funct7'] . ' ' . $conjunto['tipo'];
-
-            // Adiciona motivo NOP se houver
-            if ($conjunto['motivo_nop']) {
-                $linha .= ' - ' . $conjunto['motivo_nop'];
-            }
-
-            fwrite($outputFileReordenado, $linha . "\n");
-        }
+        $instrucoes = lerArquivo('lerHex.txt');
+        $hazards = verificar_hazards($instrucoes, $forwarding);
+        $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
+        $hazards = verificar_hazards($instrucoes, $forwarding);
+        $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
+        salvarTxt($instrucoes, $outputFileReordenado );
 
         // Fecha os arquivos
-        fclose($inputFile);
         fclose($outputFile);
         fclose($outputFileOriginal);
         fclose($outputFileReordenado);
