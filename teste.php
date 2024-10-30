@@ -234,6 +234,7 @@ function inserir_nops_em_desvios($instrucoes)
         if ($instrucoes[$i]['tipo'] == "jump" OR $instrucoes[$i]['tipo'] == "branch") {
             // Insere NOP antes da instrução de salto
             $no_operator->motivo_nop = "Inserido NOP devido a Desvio do tipo {$instrucoes[$i]['tipo']}";
+            $no_operator->nop = true;
             array_splice($instrucoes, $i+1, 0, [$no_operator->toArray()]);
             array_splice($instrucoes, $i+2, 0, [$no_operator->toArray()]);
         }
@@ -413,7 +414,7 @@ function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $output
         
 
         // Detecta hazards e insere NOPs
-        $instrucoes = lerArquivo('lerHex.txt');
+        $instrucoes = lerArquivo($inputPath);
         salvarTxt($instrucoes, $outputFileOriginal);
 
         $hazards = verificar_hazards($instrucoes, $forwarding);
@@ -421,7 +422,7 @@ function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $output
         salvarTxt($instrucoes, $outputFile);
 
         // Aplica reordenação de instruções após inserir NOPs
-        $instrucoes = lerArquivo('lerHex.txt');
+        $instrucoes = lerArquivo($inputPath);
         $hazards = verificar_hazards($instrucoes, $forwarding);
         $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
         $hazards = verificar_hazards($instrucoes, $forwarding);
@@ -438,5 +439,5 @@ function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $output
 }
 
 // Executa o processamento com e sem forwarding, incluindo arquivo reordenado
-processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_sem_forwarding.txt", "saida_reordenada_sem_forwarding.txt", false);
-processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_com_forwarding.txt", "saida_reordenada_com_forwarding.txt", true);
+processar_instrucoes("lerHex.txt", "saida_original.txt", "0_sem_forwarding.txt", "1_reordenada_sem_forwarding.txt", false);
+processar_instrucoes("lerHex.txt", "saida_original.txt", "0_com_forwarding.txt", "1_reordenada_com_forwarding.txt", true);
