@@ -329,40 +329,6 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
 
     return $instrucoes;
 }
-
-function delayBranch($instrucoes) {
-    foreach ($instrucoes as $index => $instrucao) {
-        if (isset($instrucao['tipo']) && $instrucao['tipo'] === "branch") {
-            $posicao_nop = $index - 1;
-            for ($j = $posicao_nop; $j >= 0; $j--) {
-                if (!isset($instrucoes[$j]['nop'])) {
-                    $instrucoes[$j]['nop'] = false; // Define como falso se não estiver definido
-                }
-
-                $instrucao_anterior = $instrucoes[$j];
-                if (!$instrucao_anterior['nop'] && !verificarHazardInstrucao($instrucao_anterior, $instrucao, true)) {
-                    // Definindo os atributos da instrução movida corretamente
-                    $instrucoes[$posicao_nop] = $instrucao_anterior;
-                    $instrucoes[$posicao_nop]['trava'] = true;
-                    $instrucoes[$j] = [
-                        "instrucao" => "00000000000000000000000000110011", // Representação da instrução NOP
-                        "opcode" => "0110011",
-                        "rd" => "00000",
-                        "funct3" => "000",
-                        "rs1" => "00000",
-                        "rs2" => "00000",
-                        "funct7" => "0000000",
-                        "tipo" => "NOP",
-                        "nop" => true,
-                        "motivo_nop" => "Inserido NOP devido a Desvio do tipo branch"
-                    ];
-                    $posicao_nop--;
-                }
-            }
-        }
-    }
-    return $instrucoes;
-}
 function reordenarJumpBranch($instrucoes) {
     // Itera pelas instruções da última para a primeira
     for ($i = count($instrucoes) - 1; $i >= 0; $i--) {
@@ -467,7 +433,6 @@ function salvarTxt($instrucoes, $fileResource) {
                        str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
                        str_pad("", 7, '_', STR_PAD_BOTH) . "| " . 
                        str_pad("", 10, '_', STR_PAD_BOTH) . "| " . 
-                       str_pad("", 10, '_', STR_PAD_BOTH). "| ".
                        str_pad("", 4, '_', STR_PAD_BOTH) . "|".
                        str_pad("", 80, '_');
     fwrite($fileResource, $linhaSeparadora . "\n");
@@ -483,7 +448,6 @@ function salvarTxt($instrucoes, $fileResource) {
                  str_pad($conjunto['rs2'], 5) . "| " . 
                  str_pad($conjunto['funct7'], 7) . "| " . 
                  str_pad($conjunto['tipo'], 10) . "| " . 
-                 str_pad(($conjunto['trava']? 'Sim' : 'Não '), 10, ' ', STR_PAD_BOTH). "| ".
                  str_pad(($conjunto['nop'] ? 'Sim' : 'Não '), 4) ."| " ;
 
         // Adiciona motivo NOP se houver
@@ -537,34 +501,29 @@ function lerArquivo($inputFile)
 }
 
 // Função para processar as instruções com ou sem forwarding
-function processarInstrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
+function processarInstrucoes($inputPath, $output, $forwarding)
 {
-    $outputFile = fopen($outputFinal, "w"); // Arquivo de saída para instruções com NOPs
-    $outputFileOriginal = fopen($outputOriginal, "w"); // Arquivo para gravação das instruções originais
-    $outputFileReordenado = fopen($outputReordenado, "w"); // Arquivo para gravação das instruções reordenadas
+    $output = fopen($output, "w"); // Arquivo para gravação das instruções reordenadas
     $hazards = [];
 
-    if ($outputFile && $outputFileOriginal && $outputFileReordenado) {
-
-        // reordenação
+    if ($output) {
+        // reordenação + forwarding + delayBranch + 2x nops nos desvios
         $instrucoes = lerArquivo($inputPath);
         $hazards = verificarHazards($instrucoes, $forwarding);
         $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
-        $hazards = verificarHazards($instrucoes, $forwarding);      
+        $hazards = verificarHazards($instrucoes, $forwarding);
         $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
         $instrucoes =  reordenarJumpBranch($instrucoes);
 
-        salvarTxt($instrucoes, $outputFileReordenado);
+        salvarTxt($instrucoes, $output);
 
         
         // Fecha os arquivos
-        fclose($outputFile);
-        fclose($outputFileOriginal);
-        fclose($outputFileReordenado);
+        fclose($output);
     } else {
         echo "Erro ao abrir os arquivos.";
     }
 }
 
 // Executa o processamento com e sem forwarding, incluindo arquivo reordenado
-processarInstrucoes("lerHex.txt", "saida_original.txt", "0_com_forwarding.txt", "1_reordenada_com_forwarding.txt", true);
+processarInstrucoes("lerHex.txt", "saida_original.txt", true);
