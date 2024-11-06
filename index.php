@@ -15,6 +15,7 @@ class ConjuntoInstrucao
     public $tipo;      // Tipo da instrução
     public $nop;       // Indica se é uma instrução NOP (No Operation)
     public $motivo_nop;
+    public $trava;
 
 
     // Método que converte os atributos da instrução em um array
@@ -31,6 +32,7 @@ class ConjuntoInstrucao
             'tipo' => $this->tipo,
             'nop' => $this->nop,
             'motivo_nop' => $this->motivo_nop,
+            'trava' => $this->trava
         ];
     }
 }
@@ -115,20 +117,27 @@ function obterBinario($c)
 }
 
 // Função para verificar se há hazard entre duas instruções
-function verificar_hazard_instrucao($instrucao_1, $instrucao_2, $forwardingImplementado)
+function verificarHazardInstrucao($instrucao1, $instrucao2, $forwardingImplementado)
 {
     // A instrução tipo 'store' não escreve em 'rd', logo não causa hazards.
-    if ($instrucao_1['tipo'] == "store") return false;
+    if ($instrucao1['tipo'] == "store") {
+        return false;
+    }
 
     // Ignora NOPs manuais
-    if ($instrucao_1['nop']) return false;
-    if ($instrucao_2['nop']) return false;
+    if ($instrucao1['nop'] || $instrucao2['nop']) {
+        return false;
+    }
 
     // Ignora 'ecalls'
-    if ($instrucao_2['instrucao'] == "00000000000000000000000001110011") return false;
+    if ($instrucao2['instrucao'] == "00000000000000000000000001110011") {
+        return false;
+    }
 
-    // Se 'forwarding' está implementado, só procura por hazards onde a origem é 'load'
-    if ($forwardingImplementado && $instrucao_1['tipo'] != "load") return false;
+    // Se 'forwarding' está implementado, só procura por hazards onde  a origem é 'load'
+    if ($forwardingImplementado && $instrucao1['tipo'] != "load") {
+        return false;
+    }
 
     // Tipos de instrução que usam 'rs1'
     $tiposUsamRs1 = ["alu", "load", "store", "branch"];
@@ -136,24 +145,20 @@ function verificar_hazard_instrucao($instrucao_1, $instrucao_2, $forwardingImple
     $tiposUsamRs2 = ["alu", "store", "branch"];
 
     // Verifica conflito com 'rs1'
-    if (in_array($instrucao_2['tipo'], $tiposUsamRs1)) {
-        if ($instrucao_1['rd'] == $instrucao_2['rs1'] && $instrucao_1['rd'] != "00000") {
-            return ['conflict' => true, 'rs' => 'rs1'];
-        }
+    if (in_array($instrucao2['tipo'], $tiposUsamRs1) && $instrucao1['rd'] == $instrucao2['rs1'] && $instrucao1['rd'] != "00000") {
+        return true;
     }
 
     // Verifica conflito com 'rs2'
-    if (in_array($instrucao_2['tipo'], $tiposUsamRs2)) {
-        if ($instrucao_1['rd'] == $instrucao_2['rs2'] && $instrucao_1['rd'] != "00000") {
-            return ['conflict' => true, 'rs' => 'rs2'];
-        }
+    if (in_array($instrucao2['tipo'], $tiposUsamRs2) && $instrucao1['rd'] == $instrucao2['rs2'] && $instrucao1['rd'] != "00000") {
+        return true;
     }
 
     return false;
 }
 
 // Função que verifica hazards em um conjunto de instruções
-function verificar_hazards($instrucoes, $forwarding)
+function verificarHazards($instrucoes, $forwarding)
 {
     $hazards = []; // Array para armazenar índices de hazards
     for ($x = 0; $x < count($instrucoes); $x++) {
@@ -169,9 +174,9 @@ function verificar_hazards($instrucoes, $forwarding)
                 continue;
             }
             // Se há hazard, armazena o índice
-            if (verificar_hazard_instrucao($instrucoes[$x], $instrucoes[$y], $forwarding)) {
+            if (verificarHazardInstrucao($instrucoes[$x], $instrucoes[$y], $forwarding)) {
                 $hazards[] = $x;
-                echo "Conflito entre instruções: rd={$instrucoes[$x]['rd']}, rs1={$instrucoes[$y]['rs1']}, rs2={$instrucoes[$y]['rs2']}\n";
+               echo "Conflito entre instruções: rd={$instrucoes[$x]['rd']}, rs1={$instrucoes[$y]['rs1']}, rs2={$instrucoes[$y]['rs2']}\n";
             }
         }
     }
@@ -205,37 +210,40 @@ function inserir_nops($instrucoes, $conflitos, $forwarding)
                 continue;
             }
 
-            if (verificar_hazard_instrucao($instrucoes[$conflitos[$i]], $instrucoes[$j], $forwarding)) {
-                for ($k = 0; $k < $qtd_nops; $k++)
-                $no_operator->motivo_nop = "Inserido NOP devido a conflito entre rd={$instrucoes[$conflitos[$i]]['rd']}, rs1={$instrucoes[$j]['rs1']}, rs2={$instrucoes[$j]['rs2']}";
-                array_splice($instrucoes, $conflitos[$i] + 1, 0, [$no_operator->toArray()]);
+            if (verificarHazardInstrucao($instrucoes[$conflitos[$i]], $instrucoes[$j], $forwarding)) {
+                for ($k = 0; $k < $qtd_nops; $k++) {
+                    $no_operator->motivo_nop = "Inserido NOP devido a conflito entre rd={$instrucoes[$conflitos[$i]]['rd']}, rs1={$instrucoes[$j]['rs1']}, rs2={$instrucoes[$j]['rs2']}";
+                    array_splice($instrucoes, $conflitos[$i] + 1, 0, [$no_operator->toArray()]);
+                }
             }
             $qtd_nops--;
         }
     }
 
-    return inserir_nops_em_desvios($instrucoes);
+    return inserirNopsEmDesvios($instrucoes);
 }
-function inserir_nops_em_desvios($instrucoes)
+function inserirNopsEmDesvios($instrucoes)
 {
-    $no_operator = new ConjuntoInstrucao();
-    $no_operator->instrucao = "00000000000000000000000000110011"; // Representação da instrução NOP
-    $no_operator->opcode = "0110011";
-    $no_operator->rd = "00000";
-    $no_operator->funct3 = "000";
-    $no_operator->rs1 = "00000";
-    $no_operator->rs2 = "00000";
-    $no_operator->funct7 = "0000000";
-    $no_operator->tipo = "NOP";
-
     // Itera pelas instruções na ordem inversa
     for ($i = count($instrucoes) - 1; $i >= 0; $i--) {
         // Verifica se a instrução atual é um salto
-        if ($instrucoes[$i]['tipo'] == "jump" OR $instrucoes[$i]['tipo'] == "branch") {
-            // Insere NOP antes da instrução de salto
+        if ($instrucoes[$i]['tipo'] == "jump" || $instrucoes[$i]['tipo'] == "branch" && $instrucoes[$i+1]['nop'] == false) {
+            // Cria um novo NOP
+            $no_operator = new ConjuntoInstrucao();
+            $no_operator->instrucao = "00000000000000000000000000110011"; // Representação da instrução NOP
+            $no_operator->opcode = "0110011";
+            $no_operator->rd = "00000";
+            $no_operator->funct3 = "000";
+            $no_operator->rs1 = "00000";
+            $no_operator->rs2 = "00000";
+            $no_operator->funct7 = "0000000";
+            $no_operator->tipo = "NOP";
             $no_operator->motivo_nop = "Inserido NOP devido a Desvio do tipo {$instrucoes[$i]['tipo']}";
+            $no_operator->nop = true;
+
+            // Insere NOP antes da instrução de salto
             array_splice($instrucoes, $i+1, 0, [$no_operator->toArray()]);
-            array_splice($instrucoes, $i+2, 0, [$no_operator->toArray()]);
+            array_splice($instrucoes, $i+1, 0, [$no_operator->toArray()]);
         }
     }
 
@@ -251,17 +259,21 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
 
         // Passa por todas as instruções abaixo da linha da hazard
         for ($j = $i + 1; $j < count($instrucoes); $j++) {
+            // Não considera instruções que já foram reordenadas (com trava ativa)
+            if (isset($instrucoes[$j]['trava']) && $instrucoes[$j]['trava']) {
+                continue;
+            }
 
             // Validação da linha para entrar em hazard+1 //
 
             // Passa linha $j se ela conflita com a linha da hazard
-            if (verificar_hazard_instrucao($instrucoes[$hazards[$i]], $instrucoes[$j], $forwardingImplementado)) {
+            if (verificarHazardInstrucao($instrucoes[$hazards[$i]], $instrucoes[$j], $forwardingImplementado)) {
                 continue;
             }
 
             // Passa linha $j se não tiver forwarding e ela conflitar com hazard-1
             if (!$forwardingImplementado && $i > 0) {
-                if (verificar_hazard_instrucao($instrucoes[$hazards[$i] - 1], $instrucoes[$j], $forwardingImplementado)) {
+                if (verificarHazardInstrucao($instrucoes[$hazards[$i] - 1], $instrucoes[$j], $forwardingImplementado)) {
                     continue;
                 }
             }
@@ -271,7 +283,7 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
             for ($k = $hazards[$i] + 1; $k <= $hazards[$i] + ($forwardingImplementado ? 1 : 2); $k++) {
                 // Evita $k de atravessar o tamanho máximo do vetor
                 if ($k > count($instrucoes) - 1) continue;
-                if (verificar_hazard_instrucao($instrucoes[$k], $instrucoes[$j], $forwardingImplementado)) {
+                if (verificarHazardInstrucao($instrucoes[$k], $instrucoes[$j], $forwardingImplementado)) {
                     $linhaValidaDepois = false;
                     break;
                 }
@@ -284,7 +296,7 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
             for ($k = $j + 1; $k <= $j + ($forwardingImplementado ? 1 : 2); $k++) {
                 // Evita $k de atravessar o tamanho máximo do vetor
                 if ($k > count($instrucoes) - 1) continue;
-                if (verificar_hazard_instrucao($instrucoes[$j - 1], $instrucoes[$k], $forwardingImplementado)) {
+                if (verificarHazardInstrucao($instrucoes[$j - 1], $instrucoes[$k], $forwardingImplementado)) {
                     $linhaValidaAntes = false;
                     break;
                 }
@@ -300,94 +312,252 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
 
         // Há uma instrução que pode ser reordenada
         if ($instrucaoEscolhidaDefinida) {
+            // Marca a instrução como reordenada e adiciona o motivo
+            $instrucaoEscolhida['trava'] = true;
+            $instrucaoEscolhida['motivo_nop'] = "Reordenado para evitar hazard";
+            
             // Insere a instrução após a hazard
-            array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]);
-            // Remove a instrução da posição original
-            array_splice($instrucoes, $indiceInstrucaoEscolhida + 1, 1);
+            array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]); 
+            
+            // Remove a instrução de sua posição original
+            unset($instrucoes[$indiceInstrucaoEscolhida + 1]); 
+            
+            // Reindexa o array
+            $instrucoes = array_values($instrucoes); 
         }
     }
 
     return $instrucoes;
 }
 
+function delayBranch($instrucoes) {
+    foreach ($instrucoes as $index => $instrucao) {
+        if (isset($instrucao['tipo']) && $instrucao['tipo'] === "branch") {
+            $posicao_nop = $index - 1;
+            for ($j = $posicao_nop; $j >= 0; $j--) {
+                if (!isset($instrucoes[$j]['nop'])) {
+                    $instrucoes[$j]['nop'] = false; // Define como falso se não estiver definido
+                }
+
+                $instrucao_anterior = $instrucoes[$j];
+                if (!$instrucao_anterior['nop'] && !verificarHazardInstrucao($instrucao_anterior, $instrucao, true)) {
+                    // Definindo os atributos da instrução movida corretamente
+                    $instrucoes[$posicao_nop] = $instrucao_anterior;
+                    $instrucoes[$posicao_nop]['trava'] = true;
+                    $instrucoes[$j] = [
+                        "instrucao" => "00000000000000000000000000110011", // Representação da instrução NOP
+                        "opcode" => "0110011",
+                        "rd" => "00000",
+                        "funct3" => "000",
+                        "rs1" => "00000",
+                        "rs2" => "00000",
+                        "funct7" => "0000000",
+                        "tipo" => "NOP",
+                        "nop" => true,
+                        "motivo_nop" => "Inserido NOP devido a Desvio do tipo branch"
+                    ];
+                    $posicao_nop--;
+                }
+            }
+        }
+    }
+    return $instrucoes;
+}
+function reordenarJumpBranch($instrucoes) {
+    // Itera pelas instruções da última para a primeira
+    for ($i = count($instrucoes) - 1; $i >= 0; $i--) {
+        // Verifica se a instrução atual é um jump
+        if ($instrucoes[$i]['tipo'] == "jump" || $instrucoes[$i]['tipo'] == "branch") {
+            $posicoes_nop = [];
+            $qtd_nops_necessarios = 2;
+            
+            // Encontra os NOPs após o jump
+            for ($j = $i + 1; $j < count($instrucoes) && count($posicoes_nop) < $qtd_nops_necessarios; $j++) {
+                if ($instrucoes[$j]['nop']) {
+                    $posicoes_nop[] = $j;
+                }
+            }
+
+            // Se não encontrou 2 NOPs, continua para próxima instrução
+            if (count($posicoes_nop) < $qtd_nops_necessarios) {
+                continue;
+            }
+
+            // Procura instruções acima do jump que podem ser movidas
+            $instrucoes_movidas = 0;
+            $posicoes_originais = [];
+            
+            // Variável para controlar se encontramos uma instrução que deve parar a busca
+            $deve_parar = false;
+            
+            for ($k = $i - 1; $k >= 0 && $instrucoes_movidas < $qtd_nops_necessarios; $k--) {
+                // Verifica se encontrou uma instrução que deve parar a busca
+                if ($instrucoes[$k]['tipo'] == "jump" || 
+                    $instrucoes[$k]['tipo'] == "branch" || 
+                    (isset($instrucoes[$k]['trava']) && $instrucoes[$k]['trava'])) {
+                    $deve_parar = true;
+                    break; // Para a busca imediatamente
+                }
+
+                // Verifica se a instrução pode ser movida
+                if (!$instrucoes[$k]['nop']) {
+                    $pode_mover = true;
+                    // Verifica dependências com instruções intermediárias
+                    for ($m = $k + 1; $m <= $i; $m++) {
+                        if (verificarHazardInstrucao($instrucoes[$k], $instrucoes[$m], true)) {
+                            $pode_mover = false;
+                            break;
+                        }
+                    }
+
+                    if ($pode_mover) {
+                        // Move a instrução para a posição do NOP
+                        $instrucao_mover = $instrucoes[$k];
+                        $instrucao_mover['motivo_nop'] = "Reordenado para delay slot de " . $instrucoes[$i]['tipo'];
+                        $instrucao_mover['trava'] = true;
+                        // Guarda a posição original para remoção posterior
+                        $posicoes_originais[] = $k;
+                        // Substitui o NOP pela instrução movida
+                        $instrucoes[$posicoes_nop[$instrucoes_movidas]] = $instrucao_mover;
+                        $instrucoes_movidas++;
+                    }
+                }
+            }
+
+            // Se encontrou uma instrução que deve parar a busca e ainda não moveu todas as instruções necessárias
+            // mantém os NOPs originais
+            if ($deve_parar && $instrucoes_movidas < $qtd_nops_necessarios) {
+                continue; // Pula para o próximo jump
+            }
+
+            // Remove as instruções das posições originais apenas se não encontrou motivo para parar
+            if (!$deve_parar) {
+                rsort($posicoes_originais);
+                foreach ($posicoes_originais as $posicao) {
+                    array_splice($instrucoes, $posicao, 1);
+                }
+            }
+        }
+    }
+    return $instrucoes;
+}
+
+function salvarTxt($instrucoes, $fileResource) {
+    // Define o cabeçalho com tamanhos fixos e centralizado
+    $cabecalho = str_pad("Linha", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("Instrução", 37, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("opcode", 7, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("rd", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("funct3", 6, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("rs1", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("rs2", 5, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("funct7", 7, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("Tipo", 10, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("trava", 10, ' ', STR_PAD_BOTH). "| ".
+                 str_pad("Nop", 4, ' ', STR_PAD_BOTH) . "| Motivo";
+    fwrite($fileResource, $cabecalho . "\n");
+
+    // Linha de separação
+    $linhaSeparadora = str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 35, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 7, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 6, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 7, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 10, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 10, '_', STR_PAD_BOTH). "| ".
+                       str_pad("", 4, '_', STR_PAD_BOTH) . "|".
+                       str_pad("", 80, '_');
+    fwrite($fileResource, $linhaSeparadora . "\n");
+
+    foreach ($instrucoes as $index => $conjunto) {
+        $numeroLinha = str_pad(($index + 1), 3, '0', STR_PAD_LEFT);
+        $linha = str_pad($numeroLinha, 5) . "| " . 
+                 str_pad($conjunto['instrucao'], 35) . "| " . 
+                 str_pad($conjunto['opcode'], 7) . "| " . 
+                 str_pad($conjunto['rd'], 5) . "| " . 
+                 str_pad($conjunto['funct3'], 6) . "| " . 
+                 str_pad($conjunto['rs1'], 5) . "| " . 
+                 str_pad($conjunto['rs2'], 5) . "| " . 
+                 str_pad($conjunto['funct7'], 7) . "| " . 
+                 str_pad($conjunto['tipo'], 10) . "| " . 
+                 str_pad(($conjunto['trava']? 'Sim' : 'Não '), 10, ' ', STR_PAD_BOTH). "| ".
+                 str_pad(($conjunto['nop'] ? 'Sim' : 'Não '), 4) ."| " ;
+
+        // Adiciona motivo NOP se houver
+        if (!empty($conjunto['motivo_nop'])) {
+            $linha .=  $conjunto['motivo_nop'];
+        } 
+
+        fwrite($fileResource, $linha . "\n");
+    }
+}
+
+
+function lerArquivo($inputFile)
+{
+    if (!file_exists($inputFile)) {
+        die("Arquivo não encontrado!");
+    }
+
+    $arquivo = fopen($inputFile, "r");
+    $instrucoes = [];
+
+    while (($instrucao = fgets($arquivo)) !== false) {
+        $hexString = trim($instrucao);
+        $binaryString = '';
+
+        // Converte cada caractere hexadecimal em binário
+        foreach (str_split($hexString) as $c) {
+            $binaryString .= obterBinario($c);
+        }
+
+        // Cria um novo objeto ConjuntoInstrucao
+        $conjunto = new ConjuntoInstrucao();
+        $conjunto->instrucao = $binaryString;
+        $conjunto->opcode = substr($binaryString, 25, 7);
+        $conjunto->rd = substr($binaryString, 20, 5);
+        $conjunto->funct3 = substr($binaryString, 17, 3);
+        $conjunto->rs1 = substr($binaryString, 12, 5);
+        $conjunto->rs2 = substr($binaryString, 7, 5);
+        $conjunto->funct7 = substr($binaryString, 0, 7);
+        $conjunto->tipo = opcode($conjunto->opcode, true);
+        $conjunto->nop = false;
+        $conjunto->motivo_nop = "";
+
+        // Verifica se há NOPs para a instrução
+        opcode($conjunto->opcode, false);
+        $instrucoes[] = $conjunto->toArray();
+    }
+
+    fclose($arquivo);
+    return $instrucoes; // Retorna a lista de instruções
+}
 
 // Função para processar as instruções com ou sem forwarding
-function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
+function processarInstrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
 {
-    $inputFile = fopen($inputPath, "r"); // Abre o arquivo de entrada
     $outputFile = fopen($outputFinal, "w"); // Arquivo de saída para instruções com NOPs
     $outputFileOriginal = fopen($outputOriginal, "w"); // Arquivo para gravação das instruções originais
     $outputFileReordenado = fopen($outputReordenado, "w"); // Arquivo para gravação das instruções reordenadas
+    $hazards = [];
 
-    if ($inputFile && $outputFile && $outputFileOriginal && $outputFileReordenado) {
-        $conjuntos = []; // Array de instruções
+    if ($outputFile && $outputFileOriginal && $outputFileReordenado) {
 
-        // Lê e processa o arquivo de entrada
-        while (($instrucao = fgets($inputFile)) !== false) {
-            $hexString = trim($instrucao);
-            $binaryString = '';
+        // reordenação
+        $instrucoes = lerArquivo($inputPath);
+        $hazards = verificarHazards($instrucoes, $forwarding);
+        $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
+        $hazards = verificarHazards($instrucoes, $forwarding);      
+        $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
+        $instrucoes =  reordenarJumpBranch($instrucoes);
 
-            // Converte cada caractere hexadecimal em binário
-            foreach (str_split($hexString) as $c) {
-                $binaryString .= obterBinario($c);
-            }
+        salvarTxt($instrucoes, $outputFileReordenado);
 
-            // Cria um novo objeto ConjuntoInstrucao
-            $conjunto = new ConjuntoInstrucao();
-            $conjunto->instrucao = $binaryString;
-            $conjunto->opcode = substr($binaryString, 25, 7);
-            $conjunto->rd = substr($binaryString, 20, 5);
-            $conjunto->funct3 = substr($binaryString, 17, 3);
-            $conjunto->rs1 = substr($binaryString, 12, 5);
-            $conjunto->rs2 = substr($binaryString, 7, 5);
-            $conjunto->funct7 = substr($binaryString, 0, 7);
-            $conjunto->tipo = opcode($conjunto->opcode, true);
-            $conjunto->nop = false;
-            $conjunto->motivo_nop = "";
-
-            // Verifica se há NOPs para a instrução
-            opcode($conjunto->opcode, false);
-            $conjuntos[] = $conjunto->toArray();
-        }
-
-        // Detecta hazards e insere NOPs
-        $hazards = verificar_hazards($conjuntos, $forwarding);
-        $instrucaos_com_nops = inserir_nops($conjuntos, $hazards, $forwarding);
-
-        // Grava as instruções originais
-        foreach ($conjuntos as $instrucao) {
-            fwrite($outputFileOriginal, implode(" ", $instrucao) . "\n");
-        }
-
-        // Grava as instruções processadas com NOPs
-        foreach ($instrucaos_com_nops as $index => $conjunto) {
-            $linha = ($index + 1) . ": " . $conjunto['instrucao'] . ' ' . $conjunto['opcode'] . ' ' . $conjunto['rd'] . ' ' . $conjunto['funct3'] . ' ' . $conjunto['rs1'] . ' ' . $conjunto['rs2'] . ' ' . $conjunto['funct7'] . ' ' . $conjunto['tipo'];
-
-            // Adiciona motivo NOP se houver
-            if ($conjunto['motivo_nop']) {
-                $linha .= ' - ' . $conjunto['motivo_nop'];
-            }
-
-            fwrite($outputFile, $linha . "\n");
-        }
-
-        // Aplica reordenação de instruções após inserir NOPs
-        $instrucaos_reordenadas = aplicarReordenacao($instrucaos_com_nops, $hazards, $forwarding);
-
-        // Grava as instruções reordenadas
-        foreach ($instrucaos_reordenadas as $index => $conjunto) {
-            $linha = ($index + 1) . ": " . $conjunto['instrucao'] . ' ' . $conjunto['opcode'] . ' ' . $conjunto['rd'] . ' ' . $conjunto['funct3'] . ' ' . $conjunto['rs1'] . ' ' . $conjunto['rs2'] . ' ' . $conjunto['funct7'] . ' ' . $conjunto['tipo'];
-
-            // Adiciona motivo NOP se houver
-            if ($conjunto['motivo_nop']) {
-                $linha .= ' - ' . $conjunto['motivo_nop'];
-            }
-
-            fwrite($outputFileReordenado, $linha . "\n");
-        }
-
+        
         // Fecha os arquivos
-        fclose($inputFile);
         fclose($outputFile);
         fclose($outputFileOriginal);
         fclose($outputFileReordenado);
@@ -397,5 +567,4 @@ function processar_instrucoes($inputPath, $outputOriginal, $outputFinal, $output
 }
 
 // Executa o processamento com e sem forwarding, incluindo arquivo reordenado
-processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_sem_forwarding.txt", "saida_reordenada_sem_forwarding.txt", false);
-processar_instrucoes("lerHex.txt", "saida_original.txt", "saida_com_forwarding.txt", "saida_reordenada_com_forwarding.txt", true);
+processarInstrucoes("lerHex.txt", "saida_original.txt", "0_com_forwarding.txt", "1_reordenada_com_forwarding.txt", true);

@@ -15,6 +15,7 @@ class ConjuntoInstrucao
     public $tipo;      // Tipo da instrução
     public $nop;       // Indica se é uma instrução NOP (No Operation)
     public $motivo_nop;
+    public $trava;
 
 
     // Método que converte os atributos da instrução em um array
@@ -31,6 +32,7 @@ class ConjuntoInstrucao
             'tipo' => $this->tipo,
             'nop' => $this->nop,
             'motivo_nop' => $this->motivo_nop,
+            'trava' => $this->trava
         ];
     }
 }
@@ -257,6 +259,10 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
 
         // Passa por todas as instruções abaixo da linha da hazard
         for ($j = $i + 1; $j < count($instrucoes); $j++) {
+            // Não considera instruções que já foram reordenadas (com trava ativa)
+            if (isset($instrucoes[$j]['trava']) && $instrucoes[$j]['trava']) {
+                continue;
+            }
 
             // Validação da linha para entrar em hazard+1 //
 
@@ -297,7 +303,7 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
             }
 
             if ($linhaValidaAntes && $linhaValidaDepois) {
-                $instrucaoEscolhida = $instrucoes[$j+1];
+                $instrucaoEscolhida = $instrucoes[$j];
                 $instrucaoEscolhidaDefinida = true;
                 $indiceInstrucaoEscolhida = $j;
                 break;
@@ -306,40 +312,135 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
 
         // Há uma instrução que pode ser reordenada
         if ($instrucaoEscolhidaDefinida) {
+            // Marca a instrução como reordenada e adiciona o motivo
+            $instrucaoEscolhida['trava'] = true;
+            $instrucaoEscolhida['motivo_nop'] = "Reordenado para evitar hazard";
+            
             // Insere a instrução após a hazard
-            $instrucaoEscolhida['motivo_nop'] = "Reordenado";
-            array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]); // Insere a instrução
-            unset($instrucoes[$indiceInstrucaoEscolhida+1]); // Remove a instrução de sua posição original
-            $instrucoes = array_values($instrucoes); // Reindexa o array
+            array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]); 
+            
+            // Remove a instrução de sua posição original
+            unset($instrucoes[$indiceInstrucaoEscolhida + 1]); 
+            
+            // Reindexa o array
+            $instrucoes = array_values($instrucoes); 
         }
     }
 
     return $instrucoes;
 }
-// Função para aplicar delay branch e preencher NOPs
-function delayBranch($instrucoes)
-{
+
+function delayBranch($instrucoes) {
     foreach ($instrucoes as $index => $instrucao) {
-        // Se for uma instrução de branch
-        if ($instrucao['tipo'] === "branch") {
+        if (isset($instrucao['tipo']) && $instrucao['tipo'] === "branch") {
             $posicao_nop = $index - 1;
-
-            // Procura instruções anteriores ao branch que não causem hazards e podem ser reordenadas
             for ($j = $posicao_nop; $j >= 0; $j--) {
-                $instrucao_anterior = $instrucoes[$j];
+                if (!isset($instrucoes[$j]['nop'])) {
+                    $instrucoes[$j]['nop'] = false; // Define como falso se não estiver definido
+                }
 
-                // Se a instrução não é um NOP e não causa hazard, a movemos para a posição do NOP
+                $instrucao_anterior = $instrucoes[$j];
                 if (!$instrucao_anterior['nop'] && !verificarHazardInstrucao($instrucao_anterior, $instrucao, true)) {
-                    $instrucoes[$posicao_nop] = $instrucao_anterior; // Move a instrução para a posição do NOP
-                    $instrucoes[$j] = ["instrucao" => "NOP"]; // Marca posição antiga como NOP
-                    $posicao_nop--; // Passa para o próximo NOP
+                    // Definindo os atributos da instrução movida corretamente
+                    $instrucoes[$posicao_nop] = $instrucao_anterior;
+                    $instrucoes[$posicao_nop]['trava'] = true;
+                    $instrucoes[$j] = [
+                        "instrucao" => "00000000000000000000000000110011", // Representação da instrução NOP
+                        "opcode" => "0110011",
+                        "rd" => "00000",
+                        "funct3" => "000",
+                        "rs1" => "00000",
+                        "rs2" => "00000",
+                        "funct7" => "0000000",
+                        "tipo" => "NOP",
+                        "nop" => true,
+                        "motivo_nop" => "Inserido NOP devido a Desvio do tipo branch"
+                    ];
+                    $posicao_nop--;
                 }
             }
         }
     }
     return $instrucoes;
 }
+function reordenarJumpBranch($instrucoes) {
+    // Itera pelas instruções da última para a primeira
+    for ($i = count($instrucoes) - 1; $i >= 0; $i--) {
+        // Verifica se a instrução atual é um jump
+        if ($instrucoes[$i]['tipo'] == "jump" || $instrucoes[$i]['tipo'] == "branch") {
+            $posicoes_nop = [];
+            $qtd_nops_necessarios = 2;
+            
+            // Encontra os NOPs após o jump
+            for ($j = $i + 1; $j < count($instrucoes) && count($posicoes_nop) < $qtd_nops_necessarios; $j++) {
+                if ($instrucoes[$j]['nop']) {
+                    $posicoes_nop[] = $j;
+                }
+            }
 
+            // Se não encontrou 2 NOPs, continua para próxima instrução
+            if (count($posicoes_nop) < $qtd_nops_necessarios) {
+                continue;
+            }
+
+            // Procura instruções acima do jump que podem ser movidas
+            $instrucoes_movidas = 0;
+            $posicoes_originais = [];
+            
+            // Variável para controlar se encontramos uma instrução que deve parar a busca
+            $deve_parar = false;
+            
+            for ($k = $i - 1; $k >= 0 && $instrucoes_movidas < $qtd_nops_necessarios; $k--) {
+                // Verifica se encontrou uma instrução que deve parar a busca
+                if ($instrucoes[$k]['tipo'] == "jump" || 
+                    $instrucoes[$k]['tipo'] == "branch" || 
+                    (isset($instrucoes[$k]['trava']) && $instrucoes[$k]['trava'])) {
+                    $deve_parar = true;
+                    break; // Para a busca imediatamente
+                }
+
+                // Verifica se a instrução pode ser movida
+                if (!$instrucoes[$k]['nop']) {
+                    $pode_mover = true;
+                    // Verifica dependências com instruções intermediárias
+                    for ($m = $k + 1; $m <= $i; $m++) {
+                        if (verificarHazardInstrucao($instrucoes[$k], $instrucoes[$m], true)) {
+                            $pode_mover = false;
+                            break;
+                        }
+                    }
+
+                    if ($pode_mover) {
+                        // Move a instrução para a posição do NOP
+                        $instrucao_mover = $instrucoes[$k];
+                        $instrucao_mover['motivo_nop'] = "Reordenado para delay slot de " . $instrucoes[$i]['tipo'];
+                        $instrucao_mover['trava'] = true;
+                        // Guarda a posição original para remoção posterior
+                        $posicoes_originais[] = $k;
+                        // Substitui o NOP pela instrução movida
+                        $instrucoes[$posicoes_nop[$instrucoes_movidas]] = $instrucao_mover;
+                        $instrucoes_movidas++;
+                    }
+                }
+            }
+
+            // Se encontrou uma instrução que deve parar a busca e ainda não moveu todas as instruções necessárias
+            // mantém os NOPs originais
+            if ($deve_parar && $instrucoes_movidas < $qtd_nops_necessarios) {
+                continue; // Pula para o próximo jump
+            }
+
+            // Remove as instruções das posições originais apenas se não encontrou motivo para parar
+            if (!$deve_parar) {
+                rsort($posicoes_originais);
+                foreach ($posicoes_originais as $posicao) {
+                    array_splice($instrucoes, $posicao, 1);
+                }
+            }
+        }
+    }
+    return $instrucoes;
+}
 
 function salvarTxt($instrucoes, $fileResource) {
     // Define o cabeçalho com tamanhos fixos e centralizado
@@ -352,6 +453,7 @@ function salvarTxt($instrucoes, $fileResource) {
                  str_pad("rs2", 5, ' ', STR_PAD_BOTH) . "| " . 
                  str_pad("funct7", 7, ' ', STR_PAD_BOTH) . "| " . 
                  str_pad("Tipo", 10, ' ', STR_PAD_BOTH) . "| " . 
+                 str_pad("trava", 10, ' ', STR_PAD_BOTH). "| ".
                  str_pad("Nop", 4, ' ', STR_PAD_BOTH) . "| Motivo";
     fwrite($fileResource, $cabecalho . "\n");
 
@@ -365,6 +467,7 @@ function salvarTxt($instrucoes, $fileResource) {
                        str_pad("", 5, '_', STR_PAD_BOTH) . "| " . 
                        str_pad("", 7, '_', STR_PAD_BOTH) . "| " . 
                        str_pad("", 10, '_', STR_PAD_BOTH) . "| " . 
+                       str_pad("", 10, '_', STR_PAD_BOTH). "| ".
                        str_pad("", 4, '_', STR_PAD_BOTH) . "|".
                        str_pad("", 80, '_');
     fwrite($fileResource, $linhaSeparadora . "\n");
@@ -380,6 +483,7 @@ function salvarTxt($instrucoes, $fileResource) {
                  str_pad($conjunto['rs2'], 5) . "| " . 
                  str_pad($conjunto['funct7'], 7) . "| " . 
                  str_pad($conjunto['tipo'], 10) . "| " . 
+                 str_pad(($conjunto['trava']? 'Sim' : 'Não '), 10, ' ', STR_PAD_BOTH). "| ".
                  str_pad(($conjunto['nop'] ? 'Sim' : 'Não '), 4) ."| " ;
 
         // Adiciona motivo NOP se houver
@@ -431,22 +535,6 @@ function lerArquivo($inputFile)
     fclose($arquivo);
     return $instrucoes; // Retorna a lista de instruções
 }
-// Função para salvar instruções e hazards em um arquivo JSON
-function salvarJson($instrucoes, $hazards, $nomeArquivo) {
-    // Estrutura para armazenar os dados
-    $dados = [
-        'instrucoes' => $instrucoes,
-        'hazards' => $hazards
-    ];
-
-    // Codifica os dados como JSON
-    $jsonDados = json_encode($dados, JSON_PRETTY_PRINT);
-
-    // Salva o JSON em um arquivo
-    file_put_contents($nomeArquivo, $jsonDados);
-}
-
-
 
 // Função para processar as instruções com ou sem forwarding
 function processarInstrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
@@ -457,20 +545,15 @@ function processarInstrucoes($inputPath, $outputOriginal, $outputFinal, $outputR
     $hazards = [];
 
     if ($outputFile && $outputFileOriginal && $outputFileReordenado) {
-        $instrucoes = lerArquivo($inputPath);
 
-        // Chame a função após processar as instruções e verificar hazards
-        $nomeArquivoJson = 'instrucoes_hazards.json';
-        $hazards = verificarHazards($instrucoes, $forwarding); // Supondo que você tenha esse array de hazards
-        inserir_nops($instrucoes, $hazards, $forwarding);
-        salvarJson($instrucoes, $hazards, $nomeArquivoJson); // Salva em JSON
-        
-        // Aplica reordenação de instruções após inserir NOPs
+        // reordenação
         $instrucoes = lerArquivo($inputPath);
         $hazards = verificarHazards($instrucoes, $forwarding);
         $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
-        $hazards = verificarHazards($instrucoes, $forwarding);
+        $hazards = verificarHazards($instrucoes, $forwarding);      
         $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
+        $instrucoes =  reordenarJumpBranch($instrucoes);
+
         salvarTxt($instrucoes, $outputFileReordenado);
 
         
