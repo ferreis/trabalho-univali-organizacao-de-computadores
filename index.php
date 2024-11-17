@@ -220,7 +220,7 @@ function inserir_nops($instrucoes, $conflitos, $forwarding)
         }
     }
 
-    return inserirNopsEmDesvios($instrucoes);
+    return $instrucoes;
 }
 function inserirNopsEmDesvios($instrucoes)
 {
@@ -303,7 +303,7 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
             }
 
             if ($linhaValidaAntes && $linhaValidaDepois) {
-                $instrucaoEscolhida = $instrucoes[$j];
+                $instrucaoEscolhida = $instrucoes[$j+1];
                 $instrucaoEscolhidaDefinida = true;
                 $indiceInstrucaoEscolhida = $j;
                 break;
@@ -551,36 +551,54 @@ function lerArquivo($inputFile)
 }
 
 // Função para processar as instruções com ou sem forwarding
-function processarInstrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
+function processarInstrucoes($inputPath, $outputFinal, $tecnica, $forwarding)
 {
     $outputFile = fopen($outputFinal, "w"); // Arquivo de saída para instruções com NOPs
-    $outputFileOriginal = fopen($outputOriginal, "w"); // Arquivo para gravação das instruções originais
-    $outputFileReordenado = fopen($outputReordenado, "w"); // Arquivo para gravação das instruções reordenadas
     $hazards = [];
 
-    if ($outputFile && $outputFileOriginal && $outputFileReordenado) {
-        
+    if ($outputFile) {
 
-        // reordenação
         $instrucoes = lerArquivo($inputPath);
-        $hazards = verificarHazards($instrucoes, $forwarding);
-        $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
-        $hazards = verificarHazards($instrucoes, $forwarding);
-        $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
-        $instrucoes =  reordenarJump($instrucoes);
-        $instrucoes = delayBranch($instrucoes);
-
-        salvarTxt($instrucoes, $outputFileReordenado);
+        switch ($tecnica) {
+            case 1:
+                $hazards = verificarHazards($instrucoes, $forwarding);
+                $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
+                $hazards = verificarHazards($instrucoes, $forwarding);
+                $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
+                break;
+            case 2:
+                $instrucoes = inserirNopsEmDesvios($instrucoes);
+                break;
+            case 3:
+                $instrucoes = inserirNopsEmDesvios($instrucoes);
+                $instrucoes =  reordenarJump($instrucoes);
+                $instrucoes = delayBranch($instrucoes);
+                break;
+            case 4:
+                $hazards = verificarHazards($instrucoes, $forwarding);
+                $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
+                $hazards = verificarHazards($instrucoes, $forwarding);
+                $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
+                $instrucoes = inserirNopsEmDesvios($instrucoes);
+                $instrucoes =  reordenarJump($instrucoes);
+                $instrucoes = delayBranch($instrucoes);
+                break;
+            default:
+                break;
+        }
+        salvarTxt($instrucoes, $outputFile);
 
         
         // Fecha os arquivos
         fclose($outputFile);
-        fclose($outputFileOriginal);
-        fclose($outputFileReordenado);
     } else {
         echo "Erro ao abrir os arquivos.";
     }
 }
 
 // Executa o processamento com e sem forwarding, incluindo arquivo reordenado
-processarInstrucoes("lerHex.txt", "saida_original.txt", "0_com_forwarding.txt", "1_reordenada_com_forwarding.txt", true);
+processarInstrucoes("lerHex.txt", "0_saida_original.txt", 0 , true);
+processarInstrucoes("lerHex.txt", "1_forwarding_reordenamento.txt", 1 , true);
+processarInstrucoes("lerHex.txt", "2_nops_conflitos_controle.txt", 2 , true);
+processarInstrucoes("lerHex.txt", "3_desvio_retardado.txt", 3 , true);
+processarInstrucoes("lerHex.txt", "4_forwarding_desvio_retardado.txt", 4 , true);
