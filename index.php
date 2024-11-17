@@ -317,23 +317,81 @@ function aplicarReordenacao(array $instrucoes, array $hazards, bool $forwardingI
             $instrucaoEscolhida['motivo_nop'] = "Reordenado para evitar hazard";
             
             // Insere a instrução após a hazard
-            array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]); 
-            
+            array_splice($instrucoes, $hazards[$i] + 1, 0, [$instrucaoEscolhida]);
+        
             // Remove a instrução de sua posição original
-            unset($instrucoes[$indiceInstrucaoEscolhida + 1]); 
+            unset($instrucoes[$indiceInstrucaoEscolhida + 1]);
             
             // Reindexa o array
-            $instrucoes = array_values($instrucoes); 
+            $instrucoes = array_values($instrucoes);
         }
     }
 
     return $instrucoes;
 }
-function reordenarJumpBranch($instrucoes) {
+function delayBranch(array $instrucoes): array
+{
+    for ($i = 0; $i < count($instrucoes); $i++) {
+        // Verifica se a instrução atual é um branch ou jump
+        if ($instrucoes[$i]['tipo'] === "branch") {
+            $espacos_atraso = 2; // Considerando 2 slots de atraso
+            $instrucoes_movidas = [];
+
+            // Tenta preencher os espaços de atraso com instruções úteis
+            for ($j = $i - 1; $j >= 0 && count($instrucoes_movidas) < $espacos_atraso; $j--) {
+                $instrucao = $instrucoes[$j];
+
+                // Ignora NOPs e instruções já travadas ou reordenadas
+                if ($instrucao['nop'] || (isset($instrucao['trava']) && $instrucao['trava'])) {
+                    continue;
+                }
+
+                // Verifica se a instrução pode ser movida sem causar hazards
+                $podeMover = true;
+                for ($k = $i + 1; $k <= $i + $espacos_atraso && $k < count($instrucoes); $k++) {
+                    if (verificarHazardInstrucao($instrucao, $instrucoes[$k], true)) {
+                        $podeMover = false;
+                        break;
+                    }
+                            // Verifica se encontrou uma instrução que deve parar a busca
+                        if ($instrucoes[$k]['tipo'] != "jump" || 
+                        $instrucoes[$k]['tipo'] != "branch" || 
+                        (isset($instrucoes[$k]['trava']) && $instrucoes[$k]['trava'])) {
+                        $podeMover = false;
+                        break; // Para a busca imediatamente
+                    }
+                }
+
+                if ($podeMover) {
+                    // Marca a instrução como movida
+                    $instrucao['trava'] = true;
+                    $instrucao['motivo_nop'] = "Movida para preencher delay slot do tipo {$instrucoes[$i]['tipo']}";
+
+                    // Adiciona a instrução movida aos slots
+                    $instrucoes_movidas[] = $instrucao;
+                    unset($instrucoes[$j]);
+                }
+            }
+
+            // Reindexa o array após mover instruções
+            $instrucoes = array_values($instrucoes);
+
+            // Adiciona as instruções movidas após o branch/jump
+            foreach (array_reverse($instrucoes_movidas) as $movida) {
+                array_splice($instrucoes, $i + 1, 0, [$movida]);
+                $i++; // Ajusta o índice para considerar a nova posição
+            }
+        }
+    }
+
+    return $instrucoes;
+}
+
+function reordenarJump($instrucoes) {
     // Itera pelas instruções da última para a primeira
     for ($i = count($instrucoes) - 1; $i >= 0; $i--) {
         // Verifica se a instrução atual é um jump
-        if ($instrucoes[$i]['tipo'] == "jump" || $instrucoes[$i]['tipo'] == "branch") {
+        if ($instrucoes[$i]['tipo'] == "jump") {
             $posicoes_nop = [];
             $qtd_nops_necessarios = 2;
             
@@ -358,8 +416,8 @@ function reordenarJumpBranch($instrucoes) {
             
             for ($k = $i - 1; $k >= 0 && $instrucoes_movidas < $qtd_nops_necessarios; $k--) {
                 // Verifica se encontrou uma instrução que deve parar a busca
-                if ($instrucoes[$k]['tipo'] == "jump" || 
-                    $instrucoes[$k]['tipo'] == "branch" || 
+                if ($instrucoes[$k]['tipo'] == "jump" ||
+                    $instrucoes[$k]['tipo'] == "branch" ||
                     (isset($instrucoes[$k]['trava']) && $instrucoes[$k]['trava'])) {
                     $deve_parar = true;
                     break; // Para a busca imediatamente
@@ -394,14 +452,6 @@ function reordenarJumpBranch($instrucoes) {
             // mantém os NOPs originais
             if ($deve_parar && $instrucoes_movidas < $qtd_nops_necessarios) {
                 continue; // Pula para o próximo jump
-            }
-
-            // Remove as instruções das posições originais apenas se não encontrou motivo para parar
-            if (!$deve_parar) {
-                rsort($posicoes_originais);
-                foreach ($posicoes_originais as $posicao) {
-                    array_splice($instrucoes, $posicao, 1);
-                }
             }
         }
     }
@@ -501,29 +551,36 @@ function lerArquivo($inputFile)
 }
 
 // Função para processar as instruções com ou sem forwarding
-function processarInstrucoes($inputPath, $output, $forwarding)
+function processarInstrucoes($inputPath, $outputOriginal, $outputFinal, $outputReordenado, $forwarding)
 {
-    $output = fopen($output, "w"); // Arquivo para gravação das instruções reordenadas
+    $outputFile = fopen($outputFinal, "w"); // Arquivo de saída para instruções com NOPs
+    $outputFileOriginal = fopen($outputOriginal, "w"); // Arquivo para gravação das instruções originais
+    $outputFileReordenado = fopen($outputReordenado, "w"); // Arquivo para gravação das instruções reordenadas
     $hazards = [];
 
-    if ($output) {
-        // reordenação + forwarding + delayBranch + 2x nops nos desvios
+    if ($outputFile && $outputFileOriginal && $outputFileReordenado) {
+        
+
+        // reordenação
         $instrucoes = lerArquivo($inputPath);
         $hazards = verificarHazards($instrucoes, $forwarding);
         $instrucoes = aplicarReordenacao($instrucoes, $hazards, $forwarding);
         $hazards = verificarHazards($instrucoes, $forwarding);
         $instrucoes = inserir_nops($instrucoes, $hazards, $forwarding);
-        $instrucoes =  reordenarJumpBranch($instrucoes);
+        $instrucoes =  reordenarJump($instrucoes);
+        $instrucoes = delayBranch($instrucoes);
 
-        salvarTxt($instrucoes, $output);
+        salvarTxt($instrucoes, $outputFileReordenado);
 
         
         // Fecha os arquivos
-        fclose($output);
+        fclose($outputFile);
+        fclose($outputFileOriginal);
+        fclose($outputFileReordenado);
     } else {
         echo "Erro ao abrir os arquivos.";
     }
 }
 
 // Executa o processamento com e sem forwarding, incluindo arquivo reordenado
-processarInstrucoes("lerHex.txt", "saida_original.txt", true);
+processarInstrucoes("lerHex.txt", "saida_original.txt", "0_com_forwarding.txt", "1_reordenada_com_forwarding.txt", true);
